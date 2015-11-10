@@ -1,2 +1,3 @@
-Xinet (DAM) integration API 
+# Xinet (DAM) integration (PHP API) 
+
 http://www.northplains.com/xinet/
