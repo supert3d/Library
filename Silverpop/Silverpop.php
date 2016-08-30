@@ -6,7 +6,6 @@
   * @version GIT: $Id$ In development.
   */
 
-
 /**
  * Based on v8.8 of the SilverPOP XML API. 
  * Examples of other approaches: https://github.com/simpleweb/SilverpopPHP/tree/master/src/Silverpop
