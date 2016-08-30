@@ -3,8 +3,9 @@
   * @author Tony Collings <tony@tonycollings.com>
   * @license GPL
   * @version 1.0  
-  * @version GIT: $Id$ In development.
+  *
   */
+
 
 /**
  * Based on v8.8 of the SilverPOP XML API. 
@@ -40,6 +41,7 @@ class Silverpop {
 	private $sOrganizationID = NULL; // (string) Populated on successful login. 
 	private $aData = array(); // (array) Property for storing overloaded data. 
 	private $sEndPoint = 'http://api5.silverpop.com/XMLAPI'; // (string) NOTE: Engage instance. http://api[engageInstance].silverpop.com/etc... 
+	private $sFTP = 'transfer5.silverpop.com'; 
 	private $aOperations = array(
 		'SendMailing', 
 		'ForwardToFriend',
@@ -140,11 +142,24 @@ class Silverpop {
    */
 	public function fnLogin($sUID,$sPWD){
 		$bReturn = false; 
-		$oResponse = $this->fnRequest('Login',array(
-			'USERNAME' => $sUID,
-			'PASSWORD' => $sPWD
-		)); 
-		$bReturn = (strtolower((string)$oResponse->SUCCESS) == 'true')?true:false;
+		if(isset($_SESSION['SP_DATA']) && is_array($_SESSION['SP_DATA'])){
+			// Check if authentication information is in $_SESSION before performing Login operation to prevent unneccessary API calls. 
+			$this->sSessionID = $_SESSION['SP_DATA']['sessionID']; 	
+			$this->sSessionEncoding = $_SESSION['SP_DATA']['sessionEncoding']; 	
+			$this->sOrganizationID = $_SESSION['SP_DATA']['orgID'];
+			$bReturn = true; 
+		}else{
+			// No $_SESSION data, perform Login operation. 
+			$oResponse = $this->fnRequest('Login',array(
+				'USERNAME' => $sUID,
+				'PASSWORD' => $sPWD
+			)); 
+			$bReturn = (strtolower((string)$oResponse->SUCCESS) == 'true')?true:false;
+			if($bReturn){
+				$this->sUID = $sUID; 
+				$this->sPWD = $sPWD; 
+			}
+		}
 		return $bReturn; 
 	}	
 
@@ -160,6 +175,9 @@ class Silverpop {
 		$this->sSessionID = NULL; 
 		$this->sSessionEncoding = NULL; 
 		$this->sOrganizationID = NULL; 
+		$this->sUID = NULL; 
+		$this->sPWD = NULL;
+		unset($_SESSION['SP_DATA']); // Dump authentication info' from $_SESSION  
 		return $bReturn; 
 	}
 
@@ -220,17 +238,50 @@ class Silverpop {
 			$oResult = $oResponse->Body->RESULT; 
 			if($oResult && strtolower($oResult->SUCCESS) == 'true'){
 				$oResponse = $oResult;
-				if($sOperation == 'Login'){				
-					$this->sSessionID = $oResult->SESSIONID; 	
-					$this->sSessionEncoding = $oResult->SESSION_ENCODING; 	
-					$this->sOrganizationID = $oResult->ORGANIZATION_ID; 	
+				if($sOperation == 'Login'){
+					$this->sSessionID = (string)$oResult->SESSIONID; 	
+					$this->sSessionEncoding = (string)$oResult->SESSION_ENCODING; 	
+					$this->sOrganizationID = (string)$oResult->ORGANIZATION_ID;
+					// Write authentication info' to $_SESSION to prevent further calls to Login operation. 
+					$_SESSION['SP_DATA'] = array(
+						'sessionID' => (string)$this->sSessionID,
+						'sessionEncoding' => (string)$this->sSessionEncoding,
+						'orgID' => (string)$this->sOrganizationID
+					);	
+					session_write_close(); 
 				}
 			}else{
 				// Only echo for debug; not for production. 
 				// echo '("'.$sOperation.'" Error '.$oResponse->Body->Fault->detail->error->errorid.') : '.$oResponse->Body->Fault->FaultString; 	
+				// var_dump($oResponse);
 			}
+		
 		}
 		return $oResponse; 
+	}
+	
+	
+	
+	// NOTE: Files are expundged from remote FTP every 14 days - SilverPOP 
+	// https://kb.silverpop.com/kb/Engage/Data/SFTP/001_How_to/Setting_up_an_FTP_or_SFTP_account
+	public function fnFTPGetFile($sRemotePath,$sLocalDir){
+		$bReturn = false; 
+		$oConn = ftp_connect($this->sFTP);
+		if($oConn){
+			if(ftp_login($oConn, $this->sUID, $this->sPWD)){
+				$sFileName = basename($sRemotePath); 
+				$oLocalFile = fopen($sLocalDir.$sFileName, "w+");
+				fclose($oLocalFile); 
+				if(is_dir($sLocalDir) && $oLocalFile && is_writeable($sLocalDir.$sFileName)){
+					if(ftp_get($oConn, $sLocalDir.$sFileName, $sRemotePath, FTP_BINARY)){
+						ftp_delete($oConn,$sRemotePath); // Remove file when grabbed. 
+						$bReturn = true; 
+					}else{} // Unable to get file. 	
+				}else{} // Dir not writeable. 
+			}else{} // Unable to login via. FTP. 
+			ftp_close($oConn);
+		}
+		return $bReturn; 
 	}
 	
 	
@@ -261,6 +312,8 @@ class Silverpop {
 			'jsessionid' => isset($this->sSessionID)?$this->sSessionID:NULL,
 			'xml' => $sXML
 		);
+		
+		// print_r($aFields); 
 		
 		$oResponse = $this->fnCURL($aFields); 
 		return $oResponse;  
