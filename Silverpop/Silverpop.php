@@ -102,7 +102,6 @@ class Silverpop {
 	
 	public $sListID = NULL; // (string) ID for list (useful for storing and referencing later)
 	public $sListName = NULL; // (string) List name. 
-	
 
 
   /**
@@ -141,15 +140,33 @@ class Silverpop {
    *
    */
 	public function fnLogin($sUID,$sPWD){
+
+		
 		$bReturn = false; 
-		if(isset($_SESSION['SP_DATA']) && is_array($_SESSION['SP_DATA'])){
-			// Check if authentication information is in $_SESSION before performing Login operation to prevent unneccessary API calls. 
+		$bUseSession = false; 
+		
+		// Check to see if we can use $_SESSION information 
+		if(isset($_SESSION['SP_DATA']['sessionGenerated'])){
+			$bUseSession = true; 
+			$iExpires = strtotime("+15 min",$_SESSION['SP_DATA']['sessionGenerated']); // 15-20 min timeout on SilverPOP API.  
+			if(time() > $iExpires){
+				$bUseSession = false; // Renew!  
+			}
+		}else{
+			$bUseSession = false; 	
+		}
+		
+		
+		
+		if($bUseSession){
+			
 			$this->sSessionID = $_SESSION['SP_DATA']['sessionID']; 	
 			$this->sSessionEncoding = $_SESSION['SP_DATA']['sessionEncoding']; 	
 			$this->sOrganizationID = $_SESSION['SP_DATA']['orgID'];
 			$bReturn = true; 
+		
 		}else{
-			// No $_SESSION data, perform Login operation. 
+		
 			$oResponse = $this->fnRequest('Login',array(
 				'USERNAME' => $sUID,
 				'PASSWORD' => $sPWD
@@ -158,7 +175,19 @@ class Silverpop {
 			if($bReturn){
 				$this->sUID = $sUID; 
 				$this->sPWD = $sPWD; 
+				$this->sSessionID = (string)$oResponse->SESSIONID; 	
+				$this->sSessionEncoding = (string)$oResponse->SESSION_ENCODING; 	
+				$this->sOrganizationID = (string)$oResponse->ORGANIZATION_ID;
+				// Write authentication info' to $_SESSION to prevent further calls to Login operation. 
+				$_SESSION['SP_DATA'] = array(
+					'sessionID' => (string)$this->sSessionID,
+					'sessionEncoding' => (string)$this->sSessionEncoding,
+					'orgID' => (string)$this->sOrganizationID,
+					'sessionGenerated' => (int)time()
+				);	
+				session_write_close(); 
 			}
+		
 		}
 		return $bReturn; 
 	}	
@@ -194,7 +223,7 @@ class Silverpop {
 			'VISIBILITY' => 1, // 1 = Shared, 0 = Private
 			'LIST_TYPE' => 2
 		));
-		if(!empty($sListName) && !is_null($sListName)){
+		if($oResponse && !is_null($oResponse) && !empty($sListName) && !is_null($sListName)){
 			$oList = $oResponse->xpath('//LIST[NAME="'.$sListName.'"]');  
 			if($oList){
 				$sReturn = (string)$oList[0]->ID;
@@ -238,18 +267,6 @@ class Silverpop {
 			$oResult = $oResponse->Body->RESULT; 
 			if($oResult && strtolower($oResult->SUCCESS) == 'true'){
 				$oResponse = $oResult;
-				if($sOperation == 'Login'){
-					$this->sSessionID = (string)$oResult->SESSIONID; 	
-					$this->sSessionEncoding = (string)$oResult->SESSION_ENCODING; 	
-					$this->sOrganizationID = (string)$oResult->ORGANIZATION_ID;
-					// Write authentication info' to $_SESSION to prevent further calls to Login operation. 
-					$_SESSION['SP_DATA'] = array(
-						'sessionID' => (string)$this->sSessionID,
-						'sessionEncoding' => (string)$this->sSessionEncoding,
-						'orgID' => (string)$this->sOrganizationID
-					);	
-					session_write_close(); 
-				}
 			}else{
 				// Only echo for debug; not for production. 
 				// echo '("'.$sOperation.'" Error '.$oResponse->Body->Fault->detail->error->errorid.') : '.$oResponse->Body->Fault->FaultString; 	
@@ -313,9 +330,9 @@ class Silverpop {
 			'xml' => $sXML
 		);
 		
-		// print_r($aFields); 
+		$oResponse = $this->fnCURL($aFields);
+
 		
-		$oResponse = $this->fnCURL($aFields); 
 		return $oResponse;  
 	}
 	
@@ -333,7 +350,6 @@ class Silverpop {
 			$sURL.= $this->sSessionEncoding; 
 		
 		$sFields = http_build_query(array_filter($aFields)); 
-		
 				
 		$oCURL = curl_init();
 		$aOptions = array(
@@ -347,6 +363,11 @@ class Silverpop {
 		if($oResponse !== false){
 			$oResponse = simplexml_load_string($oResponse);
 		}
+		
+		if(!$oResponse){
+			unset($_SESSION['SP_DATA']); // Probability is the jsessionid is no longer valid. Need to re-validate. 	
+		}	
+		
 		curl_close($oCURL); 
 		return $oResponse; 
 		
